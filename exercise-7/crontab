@@ -1,0 +1,4 @@
+# collect memory stats every hour
+0 * * * * bash /home/vagrant/memory.sh
+# send mail at midnight and rotate the logfile
+0 0 * * * cat /home/vagrant/log/memory.log | mail -s "Memory Log Report - $(date)" dev.giddy@gmail.com && echo "" > /home/vagrant/log/memory.log
