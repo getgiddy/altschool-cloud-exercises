@@ -1,0 +1,22 @@
+- name: Server Setup
+  hosts: webservers
+  tasks:
+    - name: Install Apache
+      ansible.builtin.package:
+        name: httpd
+        state: present
+
+    - name: Ensure apache is started
+      ansible.builtin.service:
+        name: apache2
+        state: started
+
+    - name: Set timezone
+      community.general.timezone:
+        name: Africa/Lagos
+
+    - name: Copy index.php file
+      ansible.builtin.copy:
+        src: index.php
+        dest: /var/www/
+        mode: u=rw,g=r,o=r
