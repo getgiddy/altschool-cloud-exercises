@@ -1,0 +1,28 @@
+- name: Prepare Server
+  hosts: webservers
+  vars:
+    app_dir: /var/www/html/demo
+  tasks:
+    - name: Install required packages
+      ansible.builtin.package:
+        name:
+          - git
+          - nginx
+          - php
+          - php-bcmath
+          - php-ctype
+          - php-curl
+          - php-dom
+          - php-fileinfo
+          - php-json
+          - php-mbstring
+          - php-openssl
+          - php-pcre
+          - php-pdo
+          - php-tokenizer
+          - php-xml
+          - postgresql
+          - postgresql-contrib
+          - composer
+          - unzip
+        state: present
