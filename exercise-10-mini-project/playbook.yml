@@ -2,7 +2,8 @@
   hosts: webservers
   vars:
     app_dir: /var/www/html/demo
-  tasks:
+
+  pre_tasks:
     - name: Install required packages
       ansible.builtin.package:
         name:
@@ -23,6 +24,67 @@
           - php-xml
           - postgresql
           - postgresql-contrib
+          - python3-psycopg2
           - composer
           - unzip
         state: present
+
+  tasks:
+    # postgres setup
+    - name: Check the postgres is initialized
+      ansible.builtin.stat:
+        path: "/var/lib/pgsql/data/pg_hba.conf"
+      register: postgres_data
+
+    - name: Initial postgres if not initialized
+      ansible.builtin.command: postgresql-setup initdb
+      when: not postgres_data.stat.exists
+
+    - name: Start postgres service
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+
+    - name: Create app database
+      community.postgresql.postgresql_db:
+        state: present
+        name: "{{ db_name }}"
+      become: true
+      become_user: postgres
+
+    - name: Create db user
+      community.postgresql.postgresql_user:
+        state: present
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+      become: true
+      become_user: postgres
+
+    - name: Grant user privileges
+      community.postgresql.postgresql_privs:
+        type: database
+        database: "{{ db_name }}"
+        roles: "{{ db_user }}"
+        grant_option: false
+        privs: all
+      become: true
+      become_user: postgres
+
+    - name: Allow MD5 connection for the db user
+      community.postgresql.postgresql_pg_hba:
+        dest: "~/data/pg_hba.conf"
+        contype: host
+        databases: all
+        method: md5
+        users: "{{ db_user }}"
+        create: true
+      become: true
+      become_user: postgres
+      notify: Restart postgres
+
+  handlers:
+    - name: Restart postgres
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted
