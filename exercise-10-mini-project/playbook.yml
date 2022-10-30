@@ -1,11 +1,21 @@
 - name: Prepare Server
   hosts: webservers
+  vars_files:
+    - vars.yml # should hold sensitive data
   vars:
-    app_dir: /var/www/html/demo
+    http_host: "altschool-mini-project.getgiddy.xyz"
+    http_conf: "altscho0l-mini-project.getgiddy.xyz.conf"
+    http_port: "80"
+    app_dir: "/var/www/{{ http_host }}"
+    disable_default: true
+    repo_url: https://github.com/f1amy/laravel-realworld-example-app.git
+    app_env: production
+  become: true
+  become_method: su
 
   pre_tasks:
     - name: Install required packages
-      ansible.builtin.package:
+      ansible.builtin.apt:
         name:
           - git
           - nginx
@@ -17,20 +27,21 @@
           - php-fileinfo
           - php-json
           - php-mbstring
-          - php-openssl
-          - php-pcre
           - php-pdo
           - php-tokenizer
           - php-xml
           - postgresql
           - postgresql-contrib
+          - postgresql-server
           - python3-psycopg2
           - composer
           - unzip
         state: present
+        update_cache: true
 
   tasks:
-    # postgres setup
+    ########### postgres setup #######################
+
     - name: Check the postgres is initialized
       ansible.builtin.stat:
         path: "/var/lib/pgsql/data/pg_hba.conf"
@@ -50,7 +61,7 @@
       community.postgresql.postgresql_db:
         state: present
         name: "{{ db_name }}"
-      become: true
+
       become_user: postgres
 
     - name: Create db user
@@ -58,7 +69,6 @@
         state: present
         name: "{{ db_user }}"
         password: "{{ db_password }}"
-      become: true
       become_user: postgres
 
     - name: Grant user privileges
@@ -68,7 +78,6 @@
         roles: "{{ db_user }}"
         grant_option: false
         privs: all
-      become: true
       become_user: postgres
 
     - name: Allow MD5 connection for the db user
@@ -79,12 +88,95 @@
         method: md5
         users: "{{ db_user }}"
         create: true
-      become: true
       become_user: postgres
-      notify: Restart postgres
+      notify: RestartPostgres
+
+    ############ Prepare app ########################
+
+    - name: Pull Repo changes
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: main
+      notify:
+        - InstallComposerDependencies
+        - CacheConfig
+        - ClearViewCache
+        - RunMigrations
+
+    - name: Own {{ app_dir }}
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        owner: "{{ ansible_effective_user_id }}"
+        group: "{{ ansible_effective_group_id }}"
+
+    - name: Setup environment variables
+      ansible.builtin.template:
+        src: ".env.j2"
+        dest: "{{ app_dir }}/.env"
+        owner: "{{ ansible_effective_user_id }}"
+        group: "{{ ansible_effective_group_id }}"
+        mode: "0644"
+
+    - name: Set permissions for Laravel storage folder
+      ansible.builtin.file:
+        path: "{{ app_dir }}/storage"
+        state: directory
+        recurse: true
+        mode: "0755"
+
+    - name: Generate app key
+      ansible.builtin.command:
+        cmd: php artisan key:generate
+        chdir: "{{ app_dir }}"
+      register: gen_key_output
+      changed_when: gen_key_output.rc != 0
+
+    ####### Setup Apache #################
+
+    - name: Set up Apache virtualhost
+      ansible.builtin.template:
+        src: "apache.conf.j2"
+        dest: "/etc/apache2/sites-available/{{ http_conf }}"
+        mode: "0644"
+
+    - name: Enable new site
+      ansible.builtin.command: a2ensite {{ http_conf }}
+      register: enable_site_output
+      changed_when: enable_site_output.rc != 0
+      notify: RestartApache
+
+    - name: Disable default Apache site
+      ansible.builtin.command: a2dissite 000-default.conf
+      when: disable_default
+      notify: RestartApache
 
   handlers:
-    - name: Restart postgres
+    - name: RestartPostgres
       ansible.builtin.service:
         name: postgresql
         state: restarted
+
+    - name: RestartApache
+      ansible.builtin.service:
+        name: apache2
+        state: restarted
+
+    - name: InstallComposerDependencies
+      ansible.builtin.composer:
+        working_dir: "{{ app_dir }}"
+
+    - name: CacheConfig
+      ansible.builtin.command:
+        cmd: php artisan config:cache
+        chdir: "{{ app_dir }}"
+
+    - name: ClearViewCache
+      ansible.builtin.command:
+        cmd: php artisan view:clear
+        chdir: "{{ app_dir }}"
+
+    - name: RunMigrations
+      ansible.builtin.command:
+        cmd: php artisan migrate --force
+        chdir: "{{ app_dir }}"
